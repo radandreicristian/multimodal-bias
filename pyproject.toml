@@ -1,0 +1,121 @@
+[tool.poetry]
+name = "multimodal-bias"
+version = "0.1.0"
+description = ""
+authors = ["Andrei-Cristian Rad <radandreicristian@gmail.com>"]
+license = "GPL-3.0"
+readme = "README.md"
+packages = [{include = "multimodal_bias"}]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies] # https://python-poetry.org/docs/dependency-specification/
+python = ">=3.11,<3.12"
+poethepoet = "^0.21.1" # Customizable CLI
+typer = "^0.9.0" # CLI
+
+[tool.poetry.group.dev.dependencies] # https://python-poetry.org/docs/master/managing-dependencies/
+black = "^23.7.0" # Code formatting
+isort = "^5.12.0" # Import sorting
+mypy = "0.990" # Type hinting
+ruff = "^0.0.282" # Linting
+
+[tool.poetry.group.test.dependencies]
+coverage = "~6.5.0" # Test coverage
+
+[tool.black] # https://black.readthedocs.io/en/stable/usage_and_configuration/the_basics.html#configuration-via-a-file
+line-length = 120
+target-version = ["py310"]
+
+[tool.coverage.report] # https://coverage.readthedocs.io/en/latest/config.html#report
+show_missing = true
+skip_covered = true
+
+[tool.coverage.run] # https://coverage.readthedocs.io/en/latest/config.html#run
+branch = true
+command_line = "-m unittest"
+data_file = "../.reports/.coverage"
+source = ["src"]
+
+[tool.coverage.xml] #https://coverage.readthedocs.io/en/latest/config.html#xml
+output = "../.reports/coverage.xml"
+
+[tool.ruff]
+# Enable automatically fixing static code analysis errors
+fix = true
+ignore-init-module-imports = true
+
+# Nobody got time for 80/88 line length. Just increase your screen resolution lol.
+line-length = 120
+
+# Enable pycodestyle (E), Pyflakes (F), Flake8-Bugbear (B), McCabe Complexity (C901), PyCodeStyle Warnings (W)
+select = ["E", "F", "B", "C901", "W"]
+
+# Ignore - Commented out code, assert-related warnings, missing docstring at beginning of file, init, magic methods
+ignore = ["E501", "RET504", "S101", "D100", "D104", "D105"]
+
+# Don't autofix - Missing docstring at beginning of file (D100), in package init (D104), in magic method (D105)
+unfixable = ["ERA001", "F401", "F841", "T201", "T203"]
+
+# Automatically make absolute imports
+[tool.ruff.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# Set docstyle to Google
+[tool.ruff.pydocstyle]
+convention = "google"
+max-doc-length = 120
+
+[tool.mypy] # https://mypy.readthedocs.io/en/latest/config_file.html
+python_version = "3.10"
+junit_xml = ".reports/mypy.xml"
+
+# Enable the Pydantic plugin - https://docs.pydantic.dev/latest/integrations/mypy/
+plugins = "pydantic.mypy"
+
+# Don't break on type hinting errors at runtime
+strict = "false"
+
+# Don't warn whenever a class subclasses a value of type Any.
+disallow_subclassing_any = false
+
+# Don't warn when decorator function definitions/args don't have a type.
+disallow_untyped_decorators = false
+
+# Ignore unresolved imports.
+ignore_missing_imports = true
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+warn_unreachable = true
+warn_return_any = true
+disable_error_code = "import"
+
+[tool.poe.tasks] # https://github.com/nat-n/poethepoet
+
+    [tool.poe.tasks.install]
+    help = "Lock and install dependencies."
+    shell = "poetry lock --no-update && poetry install"
+
+    [tool.poe.tasks.build]
+    help = "Build the Docker container (via Podman)."
+    shell = "docker build -t \"mm-bias\" ."
+
+    [tool.poe.tasks.run]
+    help = "Run the Docker container. Maps ports 5000 (host) to 5000 (container)."
+    shell = "docker run -d mm-bias:latest"
+
+    [tool.poe.tasks.test]
+    help = "Run unit tests."
+    shell = "coverage run && coverage report"
+
+    [tool.poe.tasks.fix]
+    help = "Fix formatting issues and sort imports."
+    shell = "cd .. && python -m black code/src && ruff code/src && isort code/src && cd code"
+
+    [tool.poe.tasks.type]
+    help = "Validate type hinting."
+    shell = "cd .. && mypy -p code.src && cd code"
