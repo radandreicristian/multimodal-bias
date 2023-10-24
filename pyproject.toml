@@ -70,9 +70,6 @@ convention = "google"
 python_version = "3.10"
 junit_xml = ".reports/mypy.xml"
 
-# Enable the Pydantic plugin - https://docs.pydantic.dev/latest/integrations/mypy/
-plugins = "pydantic.mypy"
-
 # Don't break on type hinting errors at runtime
 strict = "false"
 
