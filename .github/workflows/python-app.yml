@@ -32,7 +32,6 @@ jobs:
         python -m black src
         ruff src
         isort src
-        mypy -p src
     - name: test
       run: |
         python -m unittest

@@ -1,0 +1,21 @@
+{
+    "version": 1,
+    "formatters": {
+        "customFormatter": {
+            "()": "src.logger.formatter.CustomFormatter",
+            "format": "%(asctime)s | %(levelname_initial)s | %(filename)s:%(lineno)s | %(message)s",
+            "datefmt": "%H:%M:%S"
+        }
+    },
+    "handlers": {
+        "consoleHandler": {
+            "class": "logging.StreamHandler",
+            "level": "DEBUG",
+            "formatter": "customFormatter"
+        }
+    },
+    "root": {
+        "level": "WARN",
+        "handlers": ["consoleHandler"]
+    }
+}

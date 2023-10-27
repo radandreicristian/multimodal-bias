@@ -12,8 +12,11 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.dependencies] # https://python-poetry.org/docs/dependency-specification/
 python = ">=3.11,<3.12"
-poethepoet = "^0.21.1" # Customizable CLI
+poethepoet = "^0.24.1" # Customizable CLI
 typer = "^0.9.0" # CLI
+matrix-enum = "^1.1.0"
+python-dotenv = "^1.0.0"
+pre-commit = "^3.5.0"
 
 [tool.poetry.group.dev.dependencies] # https://python-poetry.org/docs/master/managing-dependencies/
 black = "^23.7.0" # Code formatting
@@ -95,6 +98,10 @@ disable_error_code = "import"
     help = "Lock and install dependencies."
     shell = "poetry lock --no-update && poetry install"
 
+    [tool.poe.tasks.gen]
+    help = "Generate positive and negative image/caption pairs."
+    shell = "python -m src.generate_pairs"
+
     [tool.poe.tasks.build]
     help = "Build the Docker container (via Podman)."
     shell = "docker build -t \"mm-bias\" ."
@@ -109,8 +116,8 @@ disable_error_code = "import"
 
     [tool.poe.tasks.fix]
     help = "Fix formatting issues and sort imports."
-    shell = "cd .. && python -m black code/src && ruff code/src && isort code/src && cd code"
+    shell = "python -m black src && ruff src && isort src"
 
     [tool.poe.tasks.type]
     help = "Validate type hinting."
-    shell = "cd .. && mypy -p code.src && cd code"
+    shell = "mypy -p src"
