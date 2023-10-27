@@ -13,10 +13,5 @@ logging.config.dictConfig(json.load(open(get_logging_config(**config))))
 logger = logging.getLogger()
 
 
-def generate_pairs():
-    for method in (logger.debug, logger.info, logger.warning, logger.error, logger.critical):
-        method("Generating pairs")
-
-
 if __name__ == "__main__":
-    generate_pairs()
+    logger.debug("Generating pairs...")

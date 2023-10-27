@@ -17,6 +17,7 @@ typer = "^0.9.0" # CLI
 matrix-enum = "^1.1.0"
 python-dotenv = "^1.0.0"
 pre-commit = "^3.5.0"
+parameterized = "^0.9.0"
 
 [tool.poetry.group.dev.dependencies] # https://python-poetry.org/docs/master/managing-dependencies/
 black = "^23.7.0" # Code formatting
@@ -49,11 +50,13 @@ output = "../.reports/coverage.xml"
 fix = true
 ignore-init-module-imports = true
 
+exclude = ['test']
+
 # Nobody got time for 80/88 line length. Just increase your screen resolution lol.
 line-length = 120
 
 # Enable pycodestyle (E), Pyflakes (F), Flake8-Bugbear (B), McCabe Complexity (C901), PyCodeStyle Warnings (W)
-select = ["E", "F", "B", "C901", "W"]
+select = ["D", "E", "F", "B", "C901", "W"]
 
 # Ignore - Commented out code, assert-related warnings, missing docstring at beginning of file, init, magic methods
 ignore = ["E501", "RET504", "S101", "D100", "D104", "D105"]
@@ -121,3 +124,6 @@ disable_error_code = "import"
     [tool.poe.tasks.type]
     help = "Validate type hinting."
     shell = "mypy -p src"
+
+    [tool.poe.tasks.pre]
+    shell = "pre-commit run --all-files"
