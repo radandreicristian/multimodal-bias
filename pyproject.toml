@@ -18,6 +18,7 @@ matrix-enum = "^1.1.0"
 python-dotenv = "^1.0.0"
 pre-commit = "^3.5.0"
 parameterized = "^0.9.0"
+spacy = "^3.7.2"
 
 [tool.poetry.group.dev.dependencies] # https://python-poetry.org/docs/master/managing-dependencies/
 black = "^23.7.0" # Code formatting

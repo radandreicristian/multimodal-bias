@@ -8,3 +8,7 @@
 > poetry shell
 > (multimodal-bias-py3.11) poe --help
 ```
+
+# Open Questions
+* Which pairs/targets to alter? Start with a clustering/analysis?
+*
