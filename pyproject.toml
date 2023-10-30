@@ -29,7 +29,6 @@ ruff = "^0.0.282" # Linting
 [tool.poetry.group.test.dependencies]
 coverage = "~6.5.0" # Test coverage
 
-
 [tool.poetry.group.finetune.dependencies]
 datasets = "^2.14.6"
 transformers = {extras = ["torch"], version = "^4.34.1"}
