@@ -1,4 +1,3 @@
-from src.caption.model_modifier import ModelBasedModifier
 from src.caption.rule_modifier import RuleBasedModifier
 
 
@@ -19,7 +18,5 @@ class ModifierFactory:
         modifier_name = kwargs.get("MODIFIER")
         if modifier_name == "RULE":
             return RuleBasedModifier(**kwargs)
-        elif modifier_name == "MODEL":
-            return ModelBasedModifier(**kwargs)
         else:
             raise ValueError(f"Modifier {modifier_name} not supported. Use RULE or MODEL.")
