@@ -29,6 +29,13 @@ ruff = "^0.0.282" # Linting
 [tool.poetry.group.test.dependencies]
 coverage = "~6.5.0" # Test coverage
 
+
+[tool.poetry.group.finetune.dependencies]
+datasets = "^2.14.6"
+transformers = {extras = ["torch"], version = "^4.34.1"}
+rouge-score = "^0.1.2"
+torch = "^2.1.0"
+
 [tool.black] # https://black.readthedocs.io/en/stable/usage_and_configuration/the_basics.html#configuration-via-a-file
 line-length = 120
 target-version = ["py310"]
@@ -72,6 +79,9 @@ ban-relative-imports = "all"
 # Set docstyle to Google
 [tool.ruff.pydocstyle]
 convention = "google"
+
+[tool.isort]
+profile = "black"
 
 [tool.mypy] # https://mypy.readthedocs.io/en/latest/config_file.html
 python_version = "3.10"
@@ -120,7 +130,7 @@ disable_error_code = "import"
 
     [tool.poe.tasks.fix]
     help = "Fix formatting issues and sort imports."
-    shell = "python -m black src && ruff src && isort src"
+    shell = "python -m black src; ruff src; isort src"
 
     [tool.poe.tasks.type]
     help = "Validate type hinting."

@@ -35,4 +35,4 @@ jobs:
         isort src
     - name: test
       run: |
-        python -m unittest
+        python -m unittest discover -k "not test_model_modifier.py"
