@@ -10,7 +10,7 @@ class RacePredictor():
         race_predicted = []
         for idx in range(len(dataset)):
             try:
-                image = Image.open(requests.get(dataset.url[idx], stream=True).raw)
+                image = Image.open(requests.get(dataset.url[idx], stream=True, timeout=5).raw)
                 img_array = np.array(image)
                 
                 ## DeepFace.analyze finds all faces in the image and predicts the race of each one
@@ -26,7 +26,8 @@ class RacePredictor():
                     })
             ## UnidentifiedImageError is raised in case the url is no longer available
             ## ValueError is raised in case the analyze function did not find any face
-            except (UnidentifiedImageError, ConnectionError, ValueError) as exception:
+            ## ReadTimeout is raised in case the get operation to read the image timed out
+            except (UnidentifiedImageError, requests.ReadTimeout, requests.ConnectionError, ValueError) as exception:
                 print(str(exception))
         
         return race_predicted
