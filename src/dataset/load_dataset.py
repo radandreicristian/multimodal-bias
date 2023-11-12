@@ -4,9 +4,9 @@ from typing import Optional, Any, Dict
 
 class ImageDataset(Dataset):
     def __init__(self,
-                 ids,
-                 text,
-                 url):
+                 ids: list[int],
+                 text: list[str],
+                 url: list[str]):
         self.ids = ids
         self.text = text
         self.url = url
@@ -24,9 +24,8 @@ class ImageDataset(Dataset):
                 'text' : self.text[index],
                 'url' : self.url[index]}
         
-class TrainDataModule():
-
+class DataModule():
     def __init__(self):
         raw_dataset = dict()
         raw_dataset = load_dataset("parquet", data_files='laion_face_meta\laion_face_part_00000.parquet')
-        self.train_dataset: Optional[Dataset] = ImageDataset(raw_dataset['train']['SAMPLE_ID'], raw_dataset['train']['TEXT'], raw_dataset['train']['URL'])
+        self.dataset: Optional[Dataset] = ImageDataset(raw_dataset['train']['SAMPLE_ID'], raw_dataset['train']['TEXT'], raw_dataset['train']['URL'])
