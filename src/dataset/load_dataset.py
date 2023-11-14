@@ -33,7 +33,7 @@ class ImageDataset(Dataset):
                 'text' : self.text[index],
                 'url' : self.url[index]}
         
-class DataModule():
+class DataModule:
     """Module for loading dataset"""
     
     def __init__(self):

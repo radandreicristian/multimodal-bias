@@ -5,4 +5,5 @@ from numpy import save, asarray
 if __name__ == "__main__":
     image_dataset = DataModule().dataset
     race_predictor = RacePredictor(dataset = image_dataset)
-    save("image_data.npy", asarray(race_predictor))
+    race_prediction = race_predictor()
+    save("image_data.npy", asarray(race_prediction))
