@@ -3,10 +3,13 @@ import requests
 import numpy as np
 from deepface import DeepFace
 from torch.utils.data import Dataset
-from typing import Optional, Any, Dict
+from typing import Optional
 class RacePredictor():
+    """A race predictor for images with faces."""
+
     def __init__(self,
                  dataset: Optional[Dataset]):
+        """Identifies the images with one face and predicts the race of the person."""
         race_predicted = []
         for idx in range(len(dataset)):
             try:
