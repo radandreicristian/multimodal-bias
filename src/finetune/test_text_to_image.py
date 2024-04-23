@@ -36,21 +36,24 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(FORMATTER)
 logger.addHandler(console_handler) 
 logger.setLevel(logging.DEBUG)
-
+#--train_data_dir ../datasets/finetune-dataset/train
 class TextToImage(ExamplesTestsAccelerate):
     def test_text_to_image(self):
-        output_directory="outputSD2"
+        output_directory="finetune/outputSD2_v36"
         test_args = f"""
             finetune/train_text_to_image.py
             --pretrained_model_name_or_path stabilityai/stable-diffusion-2-1
             --train_data_dir ../datasets/finetune-dataset/train
-            --resolution 512
+            --resolution 256
             --center_crop
             --random_flip
-            --train_batch_size 1
-            --gradient_accumulation_steps 20
-            --num_train_epochs 1
-            --learning_rate 1e-06
+            --mixed_precision fp16
+            --allow_tf32
+            --gradient_checkpointing
+            --train_batch_size 16 
+            --gradient_accumulation_steps 1
+            --num_train_epochs 3
+            --learning_rate 6e-10
             --scale_lr
             --lr_scheduler constant
             --lr_warmup_steps 0
@@ -81,7 +84,7 @@ class TextToImage(ExamplesTestsAccelerate):
                 --random_flip
                 --train_batch_size 1
                 --gradient_accumulation_steps 1
-                --max_train_steps 4
+                --max_train_steps 1
                 --learning_rate 5.0e-04
                 --scale_lr
                 --lr_scheduler constant

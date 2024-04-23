@@ -43,6 +43,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 from PIL import Image
+import itertools
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
@@ -53,6 +54,9 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
+import torchvision.models as models
+
+import matplotlib.pyplot as plt
 
 if is_wandb_available():
     import wandb
@@ -583,13 +587,14 @@ def main():
     # frozen models from being partitioned during `zero.Init` which gets called during
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
-    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        text_encoder = CLIPTextModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
-        )
-        vae = AutoencoderKL.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
-        )
+    #with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+    vae = AutoencoderKL.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
+    )
+
+    text_encoder = CLIPTextModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+    )
 
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
@@ -597,8 +602,9 @@ def main():
 
     # Freeze vae and text_encoder and set unet to trainable
     vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
+    #text_encoder.requires_grad_(False)
     unet.train()
+    text_encoder.train()
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -628,8 +634,9 @@ def main():
                 if args.use_ema:
                     ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
 
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
+                for model in models:
+                    sub_dir = "unet" if isinstance(model, type(unwrap_model(unet))) else "text_encoder"
+                    model.save_pretrained(os.path.join(output_dir, sub_dir))
 
                     # make sure to pop weight so that corresponding model is not saved again
                     weights.pop()
@@ -641,22 +648,39 @@ def main():
                 ema_unet.to(accelerator.device)
                 del load_model
 
-            for _ in range(len(models)):
+            while len(models) > 0:
                 # pop models so that they are not loaded again
                 model = models.pop()
 
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-                model.register_to_config(**load_model.config)
+                if isinstance(model, type(unwrap_model(text_encoder))):
+                    # load transformers style into model
+                    load_model = text_encoder_cls.from_pretrained(input_dir, subfolder="text_encoder")
+                    model.config = load_model.config
+                else:
+                    # load diffusers style into model
+                    load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+                    model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
                 del load_model
 
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)
+    
+    # Function for unwrapping if model was compiled with `torch.compile`.
+    def unwrap_model(model):
+        model = accelerator.unwrap_model(model)
+        model = model._orig_mod if is_compiled_module(model) else model
+        return model
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+        text_encoder.gradient_checkpointing_enable()
+    
+    if unwrap_model(text_encoder).dtype != torch.float32:
+        raise ValueError(
+            f"Text encoder loaded as datatype {unwrap_model(text_encoder).dtype}." f" {low_precision_error_string}"
+        )
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -681,8 +705,12 @@ def main():
     else:
         optimizer_cls = torch.optim.AdamW
 
+    params_to_optimize = (
+        itertools.chain(unet.parameters(), text_encoder.parameters())
+    )
+
     optimizer = optimizer_cls(
-        unet.parameters(),
+        params_to_optimize,
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -707,56 +735,57 @@ def main():
             data_dir=args.train_data_dir,
         )
     else:
-        data_files = {}
+        data_files_anchor = {}
+        data_files_positive = {}
+        data_files_negative = {}
         if args.train_data_dir is not None:
-            data_files["train"] = os.path.join(args.train_data_dir, "**")
-        metadata = {"text": [], "positive_text": [], "negative_text": [],
-            "image": [], "positive_image": [], "negative_image": []}
-        with open(os.path.join(args.train_data_dir, 'metadata.jsonl'), 'r') as f:
-            for line in f:
-                entry = json.loads(line)
-                metadata["text"].append(entry["text"])
-                metadata["positive_text"].append(entry["positive_text"])
-                metadata["negative_text"].append(entry["negative_text"])
-                metadata["image"].append(load_image(os.path.join(args.train_data_dir, entry["file_name"])))
-                metadata["positive_image"].append(load_image(os.path.join(args.train_data_dir, entry["positive_file_name"])))
-                metadata["negative_image"].append(load_image(os.path.join(args.train_data_dir, entry["negative_file_name"])))
-
-        batch_size = 500
-        dataset_combined = []
-        for i in range(0, len(metadata["text"]), batch_size):
-            batch_metadata = {key: value[i:i+batch_size] for key, value in metadata.items()}
-            dataset = Dataset.from_dict(batch_metadata)
-            dataset_combined.append(dataset)
-
-        if len(dataset_combined) > 1:
-            dataset = concatenate_datasets(dataset_combined)
+            data_files_anchor["train"] = os.path.join("../datasets/anchor_dataset/train", "**")
+            data_files_positive["train"] = os.path.join("../datasets/positive_dataset/train", "**")
+            data_files_negative["train"] = os.path.join("../datasets/negative_dataset/train", "**")
+        anchor_dataset = load_dataset(
+            "imagefolder",
+            data_files=data_files_anchor,
+            cache_dir=args.cache_dir,
+        )
+        positive_dataset = load_dataset(
+            "imagefolder",
+            data_files=data_files_positive,
+            cache_dir=args.cache_dir,
+        )
+        negative_dataset = load_dataset(
+            "imagefolder",
+            data_files=data_files_negative,
+            cache_dir=args.cache_dir,
+        )
+        positive_dataset = positive_dataset.rename_column("image", "positive_image")
+        negative_dataset = negative_dataset.rename_column("image", "negative_image")
+        dataset = concatenate_datasets([anchor_dataset['train'], positive_dataset['train'], negative_dataset['train']], axis=1)
 
         # See more about loading custom images at
         # https://huggingface.co/docs/datasets/v2.4.0/en/image_load#imagefolder
 
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
-    column_names = dataset.column_names
+    #column_names = dataset.column_names
 
     # 6. Get the column names for input/target.
-    dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-    if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-            )
-    if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
+    #dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
+    #if args.image_column is None:
+    #    image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
+    #else:
+    #    image_column = args.image_column
+    #    if image_column not in column_names:
+   #         raise ValueError(
+   #             f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
+    #        )
+    #if args.caption_column is None:
+    #    caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+    #else:
+    #    caption_column = args.caption_column
+    #    if caption_column not in column_names:
+    #        raise ValueError(
+    #            f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
+   #         )
 
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
@@ -795,7 +824,7 @@ def main():
     )
 
     def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[image_column]]
+        images = [image.convert("RGB") for image in examples['image']]
         examples["pixel_values"] = [train_transforms(image) for image in images]
 
         positive_images = [image.convert("RGB") for image in examples['positive_image']]
@@ -804,7 +833,7 @@ def main():
         negative_images = [image.convert("RGB") for image in examples['negative_image']]
         examples["negative_pixel_values"] = [train_transforms(image) for image in negative_images]
 
-        examples["input_ids"] = tokenize_captions(examples)
+        examples["input_ids"] = tokenize_captions_pairs(examples['positive_text'])
         examples["positive_ids"] = tokenize_captions_pairs(examples['positive_text'])
         examples["negative_ids"] = tokenize_captions_pairs(examples['negative_text'])
         return examples
@@ -813,6 +842,7 @@ def main():
         if args.max_train_samples is not None:
             dataset = dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
         # Set the training transforms
+        #preprocessed_dataset = preprocess_train(dataset)
         train_dataset = dataset.with_transform(preprocess_train)
 
     def collate_fn(examples):
@@ -854,8 +884,8 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    unet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, text_encoder, optimizer, train_dataloader, lr_scheduler
     )
 
     if args.use_ema:
@@ -872,7 +902,7 @@ def main():
         args.mixed_precision = accelerator.mixed_precision
 
     # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    #text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -889,11 +919,9 @@ def main():
         tracker_config.pop("validation_prompts")
         accelerator.init_trackers(args.tracker_project_name, tracker_config)
 
-    # Function for unwrapping if model was compiled with `torch.compile`.
-    def unwrap_model(model):
-        model = accelerator.unwrap_model(model)
-        model = model._orig_mod if is_compiled_module(model) else model
-        return model
+    #vgg16 = models.vgg16(pretrained=True)
+    #vgg16.to(accelerator.device)
+    #vgg16.eval()
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -944,6 +972,17 @@ def main():
         disable=not accelerator.is_local_main_process,
     )
 
+    def encode_prompt(text_encoder, input_ids):
+        text_input_ids = input_ids.to(text_encoder.device)
+
+        prompt_embeds = text_encoder(
+            text_input_ids,
+            return_dict=False,
+        )
+        prompt_embeds = prompt_embeds[0]
+
+        return prompt_embeds
+
     def compute_text_image_embedding(pixel_values, input_ids):
         # Convert images to latent space
         latents = vae.encode(batch[pixel_values].to(weight_dtype)).latent_dist.sample()
@@ -971,7 +1010,7 @@ def main():
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
         # Get the text embedding for conditioning
-        encoder_hidden_states = text_encoder(batch[input_ids], return_dict=False)[0]
+        encoder_hidden_states = encode_prompt(text_encoder,batch["input_ids"])
 
         # Get the target for loss depending on the prediction type
         if args.prediction_type is not None:
@@ -987,33 +1026,44 @@ def main():
         
         model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
 
-        return encoder_hidden_states, model_pred, target
+        return latents, encoder_hidden_states, model_pred, target
 
-
+    epoch_losses = []
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
+        epoch_loss = 0.0
+        epoch_step = 0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
-                encoder_hidden_states, model_pred, target = compute_text_image_embedding("pixel_values", "input_ids")
-                positive_encoder_hidden_states, positive_model_pred, positive_target = compute_text_image_embedding("positive_pixel_values", "positive_ids")
-                negative_encoder_hidden_states, negative_model_pred, negative_target = compute_text_image_embedding("negative_pixel_values", "negative_ids")
+            with accelerator.accumulate(unet, text_encoder):
+                latents, encoder_hidden_states, model_pred, target = compute_text_image_embedding("pixel_values", "input_ids")
+                positive_latents, positive_encoder_hidden_states, positive_model_pred, positive_target = compute_text_image_embedding("positive_pixel_values", "positive_ids")
+                negative_latents, negative_encoder_hidden_states, negative_model_pred, negative_target = compute_text_image_embedding("negative_pixel_values", "negative_ids")
 
                 if args.snr_gamma is None:
-                    initial_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    initial_loss = F.mse_loss(positive_model_pred.float(), positive_target.float(), reduction="mean")
 
-                    #negative_loss = torch.sum((encoder_hidden_states - negative_encoder_hidden_states)**2, dim=1)
-                    negative_cos_sim = torch.nn.functional.cosine_similarity(encoder_hidden_states, negative_encoder_hidden_states)
-                    #positive_loss = torch.sum((encoder_hidden_states - positive_encoder_hidden_states)**2, dim=1)
-                    positive_cos_sim = torch.nn.functional.cosine_similarity(encoder_hidden_states, positive_encoder_hidden_states)
-                    #lang_loss = torch.mean(negative_loss + positive_loss)
-                    temp_loss = torch.relu(negative_cos_sim - positive_cos_sim + 1.0)  # Margin is set to 1.0
-                    lang_loss = torch.mean(temp_loss)
+                    negative_cos_sim_lang = torch.nn.functional.cosine_similarity(encoder_hidden_states, negative_encoder_hidden_states)
+                    positive_cos_sim_lang = torch.nn.functional.cosine_similarity(encoder_hidden_states, positive_encoder_hidden_states)
+                    lang_loss = ((1 - positive_cos_sim_lang) ** 2 + (0 - negative_cos_sim_lang) ** 2).mean()
 
-                    positive_initial_diff = F.mse_loss(positive_model_pred.float(), model_pred.float(), reduction="mean")
-                    positive_negative_diff = F.mse_loss(positive_model_pred.float(), negative_model_pred.float(), reduction="mean")
-                    vision_loss = positive_initial_diff - positive_negative_diff
+                    #positive_model_pred_pixel = vae.decode(positive_model_pred.to(weight_dtype)).sample
+                    #model_pred_pixel = vae.decode(model_pred.to(weight_dtype)).sample
+                    #negative_model_pred_pixel = vae.decode(negative_model_pred.to(weight_dtype)).sample
 
-                    loss = initial_loss + lang_loss + vision_loss
+                    #positive_model_pred_embedding = vgg16(positive_model_pred_pixel.to(torch.float32))
+                    #model_pred_embedding = vgg16(model_pred_pixel.to(torch.float32))
+                    #negative_model_pred_embedding = vgg16(negative_model_pred_pixel.to(torch.float32))
+                    
+                    #positive_cos_sim_vision = torch.nn.functional.cosine_similarity(positive_model_pred_embedding, model_pred_embedding)
+                    #negative_cos_sim_vision = torch.nn.functional.cosine_similarity(negative_model_pred_embedding, model_pred_embedding)
+                    #vision_loss = ((1 - positive_cos_sim_vision) ** 2 + (0 - negative_cos_sim_vision) ** 2).mean()
+
+                    positive_loss = F.mse_loss(positive_model_pred.float(), model_pred.float(), reduction="mean")
+                    negative_loss = F.mse_loss(positive_model_pred.float(), negative_model_pred.float(), reduction="mean")
+                    #vision_loss = torch.clamp(positive_loss - negative_loss, min=0.0)
+                    vision_loss = torch.clamp((1 - negative_loss) ** 2 + (0 - positive_loss) ** 2, min=0.0)
+
+                    loss = initial_loss + 0.15 * lang_loss + 0.6 * vision_loss
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -1038,7 +1088,10 @@ def main():
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
+                    params_to_clip = (
+                        itertools.chain(unet.parameters(), text_encoder.parameters())
+                    )
+                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -1050,6 +1103,9 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
+                if accelerator.is_main_process:
+                    epoch_loss += train_loss
+                    epoch_step += 1
                 train_loss = 0.0
 
                 if global_step % args.checkpointing_steps == 0:
@@ -1085,6 +1141,7 @@ def main():
                 break
 
         if accelerator.is_main_process:
+            epoch_losses.append(epoch_loss/epoch_step)
             if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
                 if args.use_ema:
                     # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
@@ -1104,10 +1161,24 @@ def main():
                     # Switch back to the original UNet parameters.
                     ema_unet.restore(unet.parameters())
 
+    if accelerator.is_main_process:
+        plt.plot(range(1, len(epoch_losses) + 1), epoch_losses)
+        plt.xlabel('Epoch')
+        plt.xticks(range(1, len(epoch_losses) + 1))
+        plt.ylabel('Loss')
+        plt.title('Training Loss per Epoch')
+        plt.grid(True)
+
+        params_text = f"train_batch_size {args.train_batch_size}\n num_train_epochs {args.num_train_epochs}\n gradient_accumulation_steps {args.gradient_accumulation_steps}\n learning_rate {args.learning_rate}\n lr_scheduler {args.lr_scheduler}\n resolution {args.resolution}"
+        plt.figtext(1.3, 0, params_text, ha='right', va='bottom', fontsize=10, bbox=dict(facecolor='white', alpha=0.5))
+
+        plt.savefig('finetuning_loss.jpg', bbox_inches='tight')
+
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unet = unwrap_model(unet)
+        text_encoder = unwrap_model(text_encoder)
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
 
